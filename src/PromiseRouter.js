@@ -5,6 +5,8 @@
 // themselves use our routing information, without disturbing express
 // components that external developers may be modifying.
 
+import express from 'express';
+
 export default class PromiseRouter {
   // Each entry should be an object with:
   // path: the path to route, in express format
@@ -15,22 +17,22 @@ export default class PromiseRouter {
   //     status: optional. the http status code. defaults to 200
   //     response: a json object with the content of the response
   //     location: optional. a location header
-  constructor() {
-    this.routes = [];
+  constructor(routes = []) {
+    this.routes = routes;
     this.mountRoutes();
   }
-  
+
   // Leave the opportunity to
   // subclasses to mount their routes by overriding
   mountRoutes() {}
-  
+
   // Merge the routes into this one
   merge(router) {
     for (var route of router.routes) {
       this.routes.push(route);
     }
   };
-  
+
   route(method, path, ...handlers) {
     switch(method) {
     case 'POST':
@@ -43,21 +45,15 @@ export default class PromiseRouter {
     }
 
     let handler = handlers[0];
-  
+
     if (handlers.length > 1) {
       const length = handlers.length;
       handler = function(req) {
-        var next = function(i, req, res) {
-          if (i == length) {
-            return res;
-          }
-          let result =  handlers[i](req);
-          if (!result || typeof result.then !== "function") {
-            result = Promise.resolve(result);
-          }
-          return result.then((res) => (next(i+1, req, res))); 
-        }
-        return next(0, req);
+        return handlers.reduce((promise, handler) => {
+          return promise.then((result) => {
+            return handler(req);
+          });
+        }, Promise.resolve());
       }
     }
 
@@ -67,7 +63,7 @@ export default class PromiseRouter {
       handler: handler
     });
   };
-  
+
   // Returns an object with:
   //   handler: the handler that should deal with this request
   //   params: any :-params that got parsed from the path
@@ -103,7 +99,7 @@ export default class PromiseRouter {
       return {params: params, handler: route.handler};
     }
   };
-  
+
   // Mount the routes on this router onto an express app (or express router)
   mountOnto(expressApp) {
     for (var route of this.routes) {
@@ -125,6 +121,29 @@ export default class PromiseRouter {
       }
     }
   };
+
+  expressApp() {
+    var expressApp = express();
+    for (var route of this.routes) {
+      switch(route.method) {
+      case 'POST':
+        expressApp.post(route.path, makeExpressHandler(route.handler));
+        break;
+      case 'GET':
+        expressApp.get(route.path, makeExpressHandler(route.handler));
+        break;
+      case 'PUT':
+        expressApp.put(route.path, makeExpressHandler(route.handler));
+        break;
+      case 'DELETE':
+        expressApp.delete(route.path, makeExpressHandler(route.handler));
+        break;
+      default:
+        throw 'unexpected code branch';
+      }
+    }
+    return expressApp;
+  }
 }
 
 // Global flag. Set this to true to log every request and response.
@@ -142,17 +161,28 @@ function makeExpressHandler(promiseHandler) {
                     JSON.stringify(req.body, null, 2));
       }
       promiseHandler(req).then((result) => {
-        if (!result.response) {
-          console.log('BUG: the handler did not include a "response" field');
+        if (!result.response && !result.location && !result.text) {
+          console.log('BUG: the handler did not include a "response" or a "location" field');
           throw 'control should not get here';
         }
         if (PromiseRouter.verbose) {
-          console.log('response:', JSON.stringify(result.response, null, 2));
+          console.log('response:', JSON.stringify(result, null, 2));
         }
+
         var status = result.status || 200;
         res.status(status);
+
+        if (result.text) {
+          return res.send(result.text);
+        }
+
         if (result.location) {
           res.set('Location', result.location);
+          // Override the default expressjs response
+          // as it double encodes %encoded chars in URL
+          if (!result.response) {
+            return res.send('Found. Redirecting to '+result.location);
+          }
         }
         res.json(result.response);
       }, (e) => {

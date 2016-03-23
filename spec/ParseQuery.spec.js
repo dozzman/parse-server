@@ -2,6 +2,9 @@
 // hungry/js/test/parse_query_test.js
 //
 // Some new tests are added.
+'use strict';
+
+const Parse = require('parse/node');
 
 describe('Parse.Query testing', () => {
   it("basic query", function(done) {
@@ -1574,6 +1577,29 @@ describe('Parse.Query testing', () => {
     });
   });
 
+  it("dontSelect query without conditions", function(done) {
+    const RestaurantObject = Parse.Object.extend("Restaurant");
+    const PersonObject = Parse.Object.extend("Person");
+    const objects = [
+      new RestaurantObject({ location: "Djibouti" }),
+      new RestaurantObject({ location: "Ouagadougou" }),
+      new PersonObject({ name: "Bob", hometown: "Djibouti" }),
+      new PersonObject({ name: "Tom", hometown: "Yoloblahblahblah" }),
+      new PersonObject({ name: "Billy", hometown: "Ouagadougou" })
+    ];
+
+    Parse.Object.saveAll(objects, function() {
+      const query = new Parse.Query(RestaurantObject);
+      const mainQuery = new Parse.Query(PersonObject);
+      mainQuery.doesNotMatchKeyInQuery("hometown", "location", query);
+      mainQuery.find().then(results => {
+        equal(results.length, 1);
+        equal(results[0].get('name'), 'Tom');
+        done();
+      });
+    });
+  });
+
   it("object with length", function(done) {
     var TestObject = Parse.Object.extend("TestObject");
     var obj = new TestObject();
@@ -2088,4 +2114,60 @@ describe('Parse.Query testing', () => {
       console.log(error);
     });
   });
+
+  // #371
+  it('should properly interpret a query', (done) => {
+    var query = new Parse.Query("C1");
+    var auxQuery = new Parse.Query("C1");
+    query.matchesKeyInQuery("A1", "A2", auxQuery);
+    query.include("A3");
+    query.include("A2");
+    query.find().then((result) => {
+      done();
+    }, (err) => {
+      console.error(err);
+      fail("should not failt");
+      done();
+    })
+  });
+
+  it('should properly interpret a query', (done) => {
+    var user = new Parse.User();
+    user.set("username", "foo");
+    user.set("password", "bar");
+    return user.save().then( (user) => {
+      var objIdQuery = new Parse.Query("_User").equalTo("objectId", user.id);
+      var blockedUserQuery = user.relation("blockedUsers").query();
+
+      var aResponseQuery = new Parse.Query("MatchRelationshipActivityResponse");
+      aResponseQuery.equalTo("userA", user);
+      aResponseQuery.equalTo("userAResponse", 1);
+
+      var bResponseQuery = new Parse.Query("MatchRelationshipActivityResponse");
+      bResponseQuery.equalTo("userB", user);
+      bResponseQuery.equalTo("userBResponse", 1);
+
+      var matchOr = Parse.Query.or(aResponseQuery, bResponseQuery);
+      var matchRelationshipA = new Parse.Query("_User");
+      matchRelationshipA.matchesKeyInQuery("objectId", "userAObjectId", matchOr);
+      var matchRelationshipB = new Parse.Query("_User");
+      matchRelationshipB.matchesKeyInQuery("objectId", "userBObjectId", matchOr);
+
+
+      var orQuery = Parse.Query.or(objIdQuery, blockedUserQuery, matchRelationshipA, matchRelationshipB);
+      var query = new Parse.Query("_User");
+      query.doesNotMatchQuery("objectId", orQuery);
+      return query.find();
+    }).then((res) => {
+      done();
+      done();
+    }, (err) => {
+      console.error(err);
+      fail("should not fail");
+      done();
+    });
+
+
+  });
+
 });

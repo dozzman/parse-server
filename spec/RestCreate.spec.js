@@ -8,7 +8,7 @@ var rest = require('../src/rest');
 var request = require('request');
 
 var config = new Config('test');
-var database = DatabaseAdapter.getDatabaseConnection('test');
+var database = DatabaseAdapter.getDatabaseConnection('test', 'test_');
 
 describe('rest create', () => {
   it('handles _id', (done) => {
@@ -146,9 +146,49 @@ describe('rest create', () => {
         done();
       });
   });
-  
+
+  it('handles anonymous user signup and upgrade to new user', (done) => {
+    var data1 = {
+      authData: {
+        anonymous: {
+          id: '00000000-0000-0000-0000-000000000001'
+        }
+      }
+    };
+
+    var updatedData = {
+      authData: { anonymous: null },
+      username: 'hello',
+      password: 'world'
+    }
+    var username1;
+    var objectId;
+    rest.create(config, auth.nobody(config), '_User', data1)
+      .then((r) => {
+        expect(typeof r.response.objectId).toEqual('string');
+        expect(typeof r.response.createdAt).toEqual('string');
+        expect(typeof r.response.sessionToken).toEqual('string');
+        objectId = r.response.objectId;
+        return auth.getAuthForSessionToken({config, sessionToken: r.response.sessionToken })
+      }).then((sessionAuth) => {
+        return rest.update(config, sessionAuth, '_User', objectId, updatedData);
+      }).then((r) => {
+        return Parse.User.logOut().then(() => {
+          return Parse.User.logIn('hello', 'world');
+        })
+      }).then((r) => {
+        expect(r.id).toEqual(objectId);
+        expect(r.get('username')).toEqual('hello');
+        done();
+      }).catch((err) => {
+        fail('should not fail')
+        done();
+      })
+  });
+
   it('handles no anonymous users config', (done) => {
-     var NoAnnonConfig = Object.assign({}, config, {enableAnonymousUsers: false});
+     var NoAnnonConfig = Object.assign({}, config);
+     NoAnnonConfig.authDataManager.setEnableAnonymousUsers(false);
      var data1 = {
       authData: {
         anonymous: {
@@ -162,6 +202,7 @@ describe('rest create', () => {
     }, (err) => {
       expect(err.code).toEqual(Parse.Error.UNSUPPORTED_SERVICE);
       expect(err.message).toEqual('This authentication method is unsupported.');
+      NoAnnonConfig.authDataManager.setEnableAnonymousUsers(true);
       done();
     })
   });
@@ -175,17 +216,26 @@ describe('rest create', () => {
         }
       }
     };
+    var newUserSignedUpByFacebookObjectId;
     rest.create(config, auth.nobody(config), '_User', data)
       .then((r) => {
         expect(typeof r.response.objectId).toEqual('string');
         expect(typeof r.response.createdAt).toEqual('string');
         expect(typeof r.response.sessionToken).toEqual('string');
+        newUserSignedUpByFacebookObjectId = r.response.objectId;
         return rest.create(config, auth.nobody(config), '_User', data);
       }).then((r) => {
         expect(typeof r.response.objectId).toEqual('string');
         expect(typeof r.response.createdAt).toEqual('string');
         expect(typeof r.response.username).toEqual('string');
         expect(typeof r.response.updatedAt).toEqual('string');
+        expect(r.response.objectId).toEqual(newUserSignedUpByFacebookObjectId);
+        return rest.find(config, auth.master(config),
+                          '_Session', {sessionToken: r.response.sessionToken});
+      }).then((response) => {
+        expect(response.results.length).toEqual(1);
+        var output = response.results[0];
+        expect(output.user.objectId).toEqual(newUserSignedUpByFacebookObjectId);
         done();
       });
   });

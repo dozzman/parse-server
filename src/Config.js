@@ -5,19 +5,14 @@
 import cache from './cache';
 
 export class Config {
-
-  constructor(applicationId, mount) {
-    
-    var DatabaseAdapter = require('./DatabaseAdapter');
-
-    var cacheInfo = cache.apps[applicationId];
-    this.valid = !!cacheInfo;
-    if (!this.valid) {
+  constructor(applicationId: string, mount: string) {
+    let DatabaseAdapter = require('./DatabaseAdapter');
+    let cacheInfo = cache.apps.get(applicationId);
+    if (!cacheInfo) {
       return;
     }
 
     this.applicationId = applicationId;
-    this.collectionPrefix = cacheInfo.collectionPrefix || '';
     this.masterKey = cacheInfo.masterKey;
     this.clientKey = cacheInfo.clientKey;
     this.javascriptKey = cacheInfo.javascriptKey;
@@ -25,16 +20,64 @@ export class Config {
     this.restAPIKey = cacheInfo.restAPIKey;
     this.fileKey = cacheInfo.fileKey;
     this.facebookAppIds = cacheInfo.facebookAppIds;
-    this.enableAnonymousUsers = cacheInfo.enableAnonymousUsers;
     this.allowClientClassCreation = cacheInfo.allowClientClassCreation;
-    this.database = DatabaseAdapter.getDatabaseConnection(applicationId);
+    this.database = DatabaseAdapter.getDatabaseConnection(applicationId, cacheInfo.collectionPrefix);
+
+    this.serverURL = cacheInfo.serverURL;
+    this.publicServerURL = cacheInfo.publicServerURL;
+    this.verifyUserEmails = cacheInfo.verifyUserEmails;
+    this.appName = cacheInfo.appName;
+
     this.hooksController = cacheInfo.hooksController;
     this.filesController = cacheInfo.filesController;
-    this.pushController = cacheInfo.pushController;   
+    this.pushController = cacheInfo.pushController;
     this.loggerController = cacheInfo.loggerController;
-    this.oauth = cacheInfo.oauth;
-
+    this.userController = cacheInfo.userController;
+    this.authDataManager = cacheInfo.authDataManager;
+    this.customPages = cacheInfo.customPages || {};
     this.mount = mount;
+    this.liveQueryController = cacheInfo.liveQueryController;
+  }
+
+  static validate(options) {
+    this.validateEmailConfiguration({verifyUserEmails: options.verifyUserEmails,
+                                appName: options.appName,
+                                publicServerURL: options.publicServerURL})
+  }
+
+  static validateEmailConfiguration({verifyUserEmails, appName, publicServerURL}) {
+    if (verifyUserEmails) {
+      if (typeof appName !== 'string') {
+        throw 'An app name is required when using email verification.';
+      }
+      if (typeof publicServerURL !== 'string') {
+        throw 'A public server url is required when using email verification.';
+      }
+    }
+  }
+
+  get invalidLinkURL() {
+    return this.customPages.invalidLink || `${this.publicServerURL}/apps/invalid_link.html`;
+  }
+
+  get verifyEmailSuccessURL() {
+    return this.customPages.verifyEmailSuccess || `${this.publicServerURL}/apps/verify_email_success.html`;
+  }
+
+  get choosePasswordURL() {
+    return this.customPages.choosePassword || `${this.publicServerURL}/apps/choose_password`;
+  }
+
+  get requestResetPasswordURL() {
+    return `${this.publicServerURL}/apps/${this.applicationId}/request_password_reset`;
+  }
+
+  get passwordResetSuccessURL() {
+    return this.customPages.passwordResetSuccess || `${this.publicServerURL}/apps/password_reset_success.html`;
+  }
+
+  get verifyEmailURL() {
+    return `${this.publicServerURL}/apps/${this.applicationId}/verify_email`;
   }
 };
 

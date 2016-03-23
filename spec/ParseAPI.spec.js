@@ -4,6 +4,7 @@
 
 var DatabaseAdapter = require('../src/DatabaseAdapter');
 var request = require('request');
+const Parse = require("parse/node");
 
 describe('miscellaneous', function() {
   it('create a GameScore object', function(done) {
@@ -223,6 +224,19 @@ describe('miscellaneous', function() {
     });
   });
 
+  it('test beforeSave returns value on create and update', (done) => {
+    var obj = new Parse.Object('BeforeSaveChanged');
+    obj.set('foo', 'bing');
+    obj.save().then(() => {
+      expect(obj.get('foo')).toEqual('baz');
+      obj.set('foo', 'bar');
+      return obj.save().then(() => {
+        expect(obj.get('foo')).toEqual('baz');
+        done();
+      })
+    })
+  });
+
   it('test afterSave ran and created an object', function(done) {
     var obj = new Parse.Object('AfterSaveTest');
     obj.save();
@@ -373,6 +387,22 @@ describe('miscellaneous', function() {
     });
   });
 
+  it('test cloud function should echo keys', function(done) {
+    Parse.Cloud.run('echoKeys').then((result) => {
+      expect(result.applicationId).toEqual(Parse.applicationId);
+      expect(result.masterKey).toEqual(Parse.masterKey);
+      expect(result.javascriptKey).toEqual(Parse.javascriptKey);
+      done();
+    });
+  });
+
+  it('should properly create an object in before save', (done) => {
+    Parse.Cloud.run('createBeforeSaveChangedObject').then((res) => {
+      expect(res.get('foo')).toEqual('baz');
+      done();
+    });
+  })
+
   it('test rest_create_app', function(done) {
     var appId;
     Parse._request('POST', 'rest_create_app').then((res) => {
@@ -384,13 +414,13 @@ describe('miscellaneous', function() {
       obj.set('foo', 'bar');
       return obj.save();
     }).then(() => {
-      var db = DatabaseAdapter.getDatabaseConnection(appId);
+      var db = DatabaseAdapter.getDatabaseConnection(appId, 'test_');
       return db.mongoFind('TestObject', {}, {});
     }).then((results) => {
       expect(results.length).toEqual(1);
       expect(results[0]['foo']).toEqual('bar');
       done();
-    }).fail( err => {
+    }).fail(err => {
       fail(err);
       done();
     })
@@ -406,9 +436,9 @@ describe('miscellaneous', function() {
       // Make sure the required mock for all tests is unset.
       Parse.Cloud._removeHook("Triggers", "beforeSave", "GameScore");
       done();
-   });
-   
-   it('object is set on create and update', done => {
+    });
+
+    it('object is set on create and update', done => {
       let triggerTime = 0;
       // Register a mock beforeSave hook
       Parse.Cloud.beforeSave('GameScore', (req, res) => {
@@ -633,6 +663,7 @@ describe('miscellaneous', function() {
   it('test afterSave get original object on update', function(done) {
     var triggerTime = 0;
     // Register a mock beforeSave hook
+
     Parse.Cloud.afterSave('GameScore', function(req, res) {
       var object = req.object;
       expect(object instanceof Parse.Object).toBeTruthy();
@@ -674,7 +705,7 @@ describe('miscellaneous', function() {
       // Make sure the checking has been triggered
       expect(triggerTime).toBe(2);
       // Clear mock afterSave
-       Parse.Cloud._removeHook("Triggers", "afterSave", "GameScore");
+      Parse.Cloud._removeHook("Triggers", "afterSave", "GameScore");
       done();
     }, function(error) {
       console.error(error);
@@ -682,6 +713,224 @@ describe('miscellaneous', function() {
       done();
     });
   });
+
+  it('test afterSave get full original object even req auth can not query it', (done) => {
+    var triggerTime = 0;
+    // Register a mock beforeSave hook
+    Parse.Cloud.afterSave('GameScore', function(req, res) {
+      var object = req.object;
+      var originalObject = req.original;
+      if (triggerTime == 0) {
+        // Create
+      } else if (triggerTime == 1) {
+        // Update
+        expect(object.get('foo')).toEqual('baz');
+        // Make sure we get the full originalObject
+        expect(originalObject instanceof Parse.Object).toBeTruthy();
+        expect(originalObject.get('fooAgain')).toEqual('barAgain');
+        expect(originalObject.id).not.toBeUndefined();
+        expect(originalObject.createdAt).not.toBeUndefined();
+        expect(originalObject.updatedAt).not.toBeUndefined();
+        expect(originalObject.get('foo')).toEqual('bar');
+      } else {
+        res.error();
+      }
+      triggerTime++;
+      res.success();
+    });
+
+    var obj = new Parse.Object('GameScore');
+    obj.set('foo', 'bar');
+    obj.set('fooAgain', 'barAgain');
+    var acl = new Parse.ACL();
+    // Make sure our update request can not query the object
+    acl.setPublicReadAccess(false);
+    acl.setPublicWriteAccess(true);
+    obj.setACL(acl);
+    obj.save().then(function() {
+      // We only update foo
+      obj.set('foo', 'baz');
+      return obj.save();
+    }).then(function() {
+      // Make sure the checking has been triggered
+      expect(triggerTime).toBe(2);
+      // Clear mock afterSave
+      Parse.Cloud._removeHook("Triggers", "afterSave", "GameScore");
+      done();
+    }, function(error) {
+      console.error(error);
+      fail(error);
+      done();
+    });
+  });
+
+  it('afterSave flattens custom operations', done => {
+    var triggerTime = 0;
+    // Register a mock beforeSave hook
+    Parse.Cloud.afterSave('GameScore', function(req, res) {
+      let object = req.object;
+      expect(object instanceof Parse.Object).toBeTruthy();
+      let originalObject = req.original;
+      if (triggerTime == 0) {
+        // Create
+        expect(object.get('yolo')).toEqual(1);
+      } else if (triggerTime == 1) {
+        // Update
+        expect(object.get('yolo')).toEqual(2);
+        // Check the originalObject
+        expect(originalObject.get('yolo')).toEqual(1);
+      } else {
+        res.error();
+      }
+      triggerTime++;
+      res.success();
+    });
+
+    var obj = new Parse.Object('GameScore');
+    obj.increment('yolo', 1);
+    obj.save().then(() => {
+      obj.increment('yolo', 1);
+      return obj.save();
+    }).then(() => {
+      // Make sure the checking has been triggered
+      expect(triggerTime).toBe(2);
+      // Clear mock afterSave
+      Parse.Cloud._removeHook("Triggers", "afterSave", "GameScore");
+      done();
+    }, error => {
+      console.error(error);
+      fail(error);
+      done();
+    });
+  });
+
+  it('beforeSave receives ACL', done => {
+    let triggerTime = 0;
+    // Register a mock beforeSave hook
+    Parse.Cloud.beforeSave('GameScore', function(req, res) {
+      let object = req.object;
+      if (triggerTime == 0) {
+        let acl = object.getACL();
+        expect(acl.getPublicReadAccess()).toBeTruthy();
+        expect(acl.getPublicWriteAccess()).toBeTruthy();
+      } else if (triggerTime == 1) {
+        let acl = object.getACL();
+        expect(acl.getPublicReadAccess()).toBeFalsy();
+        expect(acl.getPublicWriteAccess()).toBeTruthy();
+      } else {
+        res.error();
+      }
+      triggerTime++;
+      res.success();
+    });
+
+    let obj = new Parse.Object('GameScore');
+    let acl = new Parse.ACL();
+    acl.setPublicReadAccess(true);
+    acl.setPublicWriteAccess(true);
+    obj.setACL(acl);
+    obj.save().then(() => {
+      acl.setPublicReadAccess(false);
+      obj.setACL(acl);
+      return obj.save();
+    }).then(() => {
+      // Make sure the checking has been triggered
+      expect(triggerTime).toBe(2);
+      // Clear mock afterSave
+      Parse.Cloud._removeHook("Triggers", "beforeSave", "GameScore");
+      done();
+    }, error => {
+      console.error(error);
+      fail(error);
+      done();
+    });
+  });
+
+  it('afterSave receives ACL', done => {
+    let triggerTime = 0;
+    // Register a mock beforeSave hook
+    Parse.Cloud.afterSave('GameScore', function(req, res) {
+      let object = req.object;
+      if (triggerTime == 0) {
+        let acl = object.getACL();
+        expect(acl.getPublicReadAccess()).toBeTruthy();
+        expect(acl.getPublicWriteAccess()).toBeTruthy();
+      } else if (triggerTime == 1) {
+        let acl = object.getACL();
+        expect(acl.getPublicReadAccess()).toBeFalsy();
+        expect(acl.getPublicWriteAccess()).toBeTruthy();
+      } else {
+        res.error();
+      }
+      triggerTime++;
+      res.success();
+    });
+
+    let obj = new Parse.Object('GameScore');
+    let acl = new Parse.ACL();
+    acl.setPublicReadAccess(true);
+    acl.setPublicWriteAccess(true);
+    obj.setACL(acl);
+    obj.save().then(() => {
+      acl.setPublicReadAccess(false);
+      obj.setACL(acl);
+      return obj.save();
+    }).then(() => {
+      // Make sure the checking has been triggered
+      expect(triggerTime).toBe(2);
+      // Clear mock afterSave
+      Parse.Cloud._removeHook("Triggers", "afterSave", "GameScore");
+      done();
+    }, error => {
+      console.error(error);
+      fail(error);
+      done();
+    });
+  });
+
+  it('should return the updated fields on PUT', (done) => {
+    let obj = new Parse.Object('GameScore');
+    obj.save({a:'hello', c: 1, d: ['1'], e:['1'], f:['1','2']}).then(( ) => {
+      var headers = {
+        'Content-Type': 'application/json',
+        'X-Parse-Application-Id': 'test',
+        'X-Parse-REST-API-Key': 'rest',
+        'X-Parse-Installation-Id': 'yolo'
+      };
+      request.put({
+        headers: headers,
+        url: 'http://localhost:8378/1/classes/GameScore/'+obj.id,
+        body: JSON.stringify({
+          a: 'b',
+          c: {"__op":"Increment","amount":2},
+          d: {"__op":"Add", objects: ['2']},
+          e: {"__op":"AddUnique", objects: ['1', '2']},
+          f: {"__op":"Remove", objects: ['2']},
+          selfThing: {"__type":"Pointer","className":"GameScore","objectId":obj.id},
+        })
+      }, (error, response, body) => {
+        body = JSON.parse(body);
+        expect(body.a).toBeUndefined();
+        expect(body.c).toEqual(3); // 2+1
+        expect(body.d.length).toBe(2);
+        expect(body.d.indexOf('1') > -1).toBe(true);
+        expect(body.d.indexOf('2') > -1).toBe(true);
+        expect(body.e.length).toBe(2);
+        expect(body.e.indexOf('1') > -1).toBe(true);
+        expect(body.e.indexOf('2') > -1).toBe(true);
+        expect(body.f.length).toBe(1);
+        expect(body.f.indexOf('1') > -1).toBe(true);
+        // return nothing on other self
+        expect(body.selfThing).toBeUndefined();
+        // updatedAt is always set
+        expect(body.updatedAt).not.toBeUndefined();
+        done();
+      });
+    }).fail((err) => {
+      fail('Should not fail');
+      done();
+    })
+  })
 
   it('test cloud function error handling', (done) => {
     // Register a function which will fail
@@ -697,6 +946,80 @@ describe('miscellaneous', function() {
       expect(e.message).toEqual('noway');
       Parse.Cloud._removeHook("Functions", "willFail");
       done();
+    });
+  });
+
+  it('test beforeSave/afterSave get installationId', function(done) {
+    let triggerTime = 0;
+    Parse.Cloud.beforeSave('GameScore', function(req, res) {
+      triggerTime++;
+      expect(triggerTime).toEqual(1);
+      expect(req.installationId).toEqual('yolo');
+      res.success();
+    });
+    Parse.Cloud.afterSave('GameScore', function(req) {
+      triggerTime++;
+      expect(triggerTime).toEqual(2);
+      expect(req.installationId).toEqual('yolo');
+    });
+
+    var headers = {
+      'Content-Type': 'application/json',
+      'X-Parse-Application-Id': 'test',
+      'X-Parse-REST-API-Key': 'rest',
+      'X-Parse-Installation-Id': 'yolo'
+    };
+    request.post({
+      headers: headers,
+      url: 'http://localhost:8378/1/classes/GameScore',
+      body: JSON.stringify({ a: 'b' })
+    }, (error, response, body) => {
+      expect(error).toBe(null);
+      expect(triggerTime).toEqual(2);
+
+      Parse.Cloud._removeHook("Triggers", "beforeSave", "GameScore");
+      Parse.Cloud._removeHook("Triggers", "afterSave", "GameScore");
+      done();
+    });
+  });
+
+  it('test beforeDelete/afterDelete get installationId', function(done) {
+    let triggerTime = 0;
+    Parse.Cloud.beforeDelete('GameScore', function(req, res) {
+      triggerTime++;
+      expect(triggerTime).toEqual(1);
+      expect(req.installationId).toEqual('yolo');
+      res.success();
+    });
+    Parse.Cloud.afterDelete('GameScore', function(req) {
+      triggerTime++;
+      expect(triggerTime).toEqual(2);
+      expect(req.installationId).toEqual('yolo');
+    });
+
+    var headers = {
+      'Content-Type': 'application/json',
+      'X-Parse-Application-Id': 'test',
+      'X-Parse-REST-API-Key': 'rest',
+      'X-Parse-Installation-Id': 'yolo'
+    };
+    request.post({
+      headers: headers,
+      url: 'http://localhost:8378/1/classes/GameScore',
+      body: JSON.stringify({ a: 'b' })
+    }, (error, response, body) => {
+      expect(error).toBe(null);
+      request.del({
+        headers: headers,
+        url: 'http://localhost:8378/1/classes/GameScore/' + JSON.parse(body).objectId
+      }, (error, response, body) => {
+        expect(error).toBe(null);
+        expect(triggerTime).toEqual(2);
+
+        Parse.Cloud._removeHook("Triggers", "beforeDelete", "GameScore");
+        Parse.Cloud._removeHook("Triggers", "afterDelete", "GameScore");
+        done();
+      });
     });
   });
 
@@ -841,6 +1164,79 @@ describe('miscellaneous', function() {
       expect(e.code).toEqual(Parse.Error.SCRIPT_FAILED);
       expect(e.message).toEqual('Invalid function.');
       done();
+    });
+  });
+
+  it('beforeSave change propagates through the save response', (done) => {
+    Parse.Cloud.beforeSave('ChangingObject', function(request, response) {
+      request.object.set('foo', 'baz');
+      response.success();
+    });
+    let obj = new Parse.Object('ChangingObject');
+    obj.save({ foo: 'bar' }).then((objAgain) => {
+      expect(objAgain.get('foo')).toEqual('baz');
+      Parse.Cloud._removeHook("Triggers", "beforeSave", "ChangingObject");
+      done();
+    }, (e) => {
+      Parse.Cloud._removeHook("Triggers", "beforeSave", "ChangingObject");
+      fail('Should not have failed to save.');
+      done();
+    });
+  });
+
+  it('dedupes an installation properly and returns updatedAt', (done) => {
+    let headers = {
+      'Content-Type': 'application/json',
+      'X-Parse-Application-Id': 'test',
+      'X-Parse-REST-API-Key': 'rest'
+    };
+    let data = {
+      'installationId': 'lkjsahdfkjhsdfkjhsdfkjhsdf',
+      'deviceType': 'embedded'
+    };
+    let requestOptions = {
+      headers: headers,
+      url: 'http://localhost:8378/1/installations',
+      body: JSON.stringify(data)
+    };
+    request.post(requestOptions, (error, response, body) => {
+      expect(error).toBe(null);
+      let b = JSON.parse(body);
+      expect(typeof b.objectId).toEqual('string');
+      request.post(requestOptions, (error, response, body) => {
+        expect(error).toBe(null);
+        let b = JSON.parse(body);
+        expect(typeof b.updatedAt).toEqual('string');
+        done();
+      });
+    });
+  });
+
+  it('android login providing empty authData block works', (done) => {
+    let headers = {
+      'Content-Type': 'application/json',
+      'X-Parse-Application-Id': 'test',
+      'X-Parse-REST-API-Key': 'rest'
+    };
+    let data = {
+      username: 'pulse1989',
+      password: 'password1234',
+      authData: {}
+    };
+    let requestOptions = {
+      headers: headers,
+      url: 'http://localhost:8378/1/users',
+      body: JSON.stringify(data)
+    };
+    request.post(requestOptions, (error, response, body) => {
+      expect(error).toBe(null);
+      requestOptions.url = 'http://localhost:8378/1/login';
+      request.get(requestOptions, (error, response, body) => {
+        expect(error).toBe(null);
+        let b = JSON.parse(body);
+        expect(typeof b['sessionToken']).toEqual('string');
+        done();
+      });
     });
   });
 
