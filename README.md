@@ -104,12 +104,12 @@ Once you have a better understanding of how the project works, please refer to t
 
 We have provided a basic [Node.js application](https://github.com/ParsePlatform/parse-server-example) that uses the Parse Server module on Express and can be easily deployed to various infrastructure providers:
 
-* [Heroku and mLab](https://github.com/ParsePlatform/parse-server/wiki/Deploying-Parse-Server#deploying-to-heroku-and-mLab)
+* [Heroku and mLab](https://devcenter.heroku.com/articles/deploying-a-parse-server-to-heroku)
 * [AWS and Elastic Beanstalk](http://mobile.awsblog.com/post/TxCD57GZLM2JR/How-to-set-up-Parse-Server-on-AWS-using-AWS-Elastic-Beanstalk)
 * [Digital Ocean](https://www.digitalocean.com/community/tutorials/how-to-run-parse-server-on-ubuntu-14-04)
 * [NodeChef](https://nodechef.com/blog/post/6/migrate-from-parse-to-nodechef%E2%80%99s-managed-parse-server)
 * [Google App Engine](https://medium.com/@justinbeckwith/deploying-parse-server-to-google-app-engine-6bc0b7451d50)
-* [Microsoft Azure](https://azure.microsoft.com/en-us/blog/azure-welcomes-parse-developers/) 
+* [Microsoft Azure](https://azure.microsoft.com/en-us/blog/azure-welcomes-parse-developers/)
 * [Pivotal Web Services](https://github.com/cf-platform-eng/pws-parse-server)
 * [Back4app](http://blog.back4app.com/2016/03/01/quick-wizard-migration/)
 
@@ -159,7 +159,7 @@ For the full list of available options, run `parse-server --help`.
 
 * `appId` **(required)** - The application id to host with this server instance. You can use any arbitrary string. For migrated apps, this should match your hosted Parse app.
 * `masterKey` **(required)** - The master key to use for overriding ACL security.  You can use any arbitrary string. Keep it secret! For migrated apps, this should match your hosted Parse app.
-* `databaseURI` **(required)** - The connection string for your database, i.e. `mongodb://user:pass@host.com/dbname`.
+* `databaseURI` **(required)** - The connection string for your database, i.e. `mongodb://user:pass@host.com/dbname`. Be sure to [URL encode your password](https://app.zencoder.com/docs/guides/getting-started/special-characters-in-usernames-and-passwords) if your password has special charachters. 
 * `port` - The default port is 1337, specify this parameter to use a different port.
 * `serverURL` - URL to your Parse Server (don't forget to specify http:// or https://). This URL will be used when making requests to Parse Server from Cloud Code.
 * `cloud` - The absolute path to your cloud code `main.js` file.
@@ -185,7 +185,39 @@ The client keys used with Parse are no longer necessary with Parse Server. If yo
 * `filesAdapter` - The default behavior (GridStore) can be changed by creating an adapter class (see [`FilesAdapter.js`](https://github.com/ParsePlatform/parse-server/blob/master/src/Adapters/Files/FilesAdapter.js)).
 * `maxUploadSize` - Max file size for uploads. Defaults to 20 MB.
 * `loggerAdapter` - The default behavior/transport (File) can be changed by creating an adapter class (see [`LoggerAdapter.js`](https://github.com/ParsePlatform/parse-server/blob/master/src/Adapters/Logger/LoggerAdapter.js)).
-* `databaseAdapter` - The backing store can be changed by creating an adapter class (see `DatabaseAdapter.js`). Defaults to `MongoStorageAdapter`.
+* `sessionLength` - The length of time in seconds that a session should be valid for. Defaults to 31536000 seconds (1 year).
+
+##### Email verification and password reset
+
+Verifying user email addresses and enabling password reset via email requries an email adapter. As part of the `parse-server` package we provide an adapter for sending email through Mailgun. To use it, sign up for Mailgun, and add this to your initialization code:
+
+```js
+var server = ParseServer({
+  ...otherOptions,
+  // Enable email verification
+  verifyUserEmails: true,
+  // The public URL of your app.
+  // This will appear in the link that is used to verify email addresses and reset passwords.
+  // Set the mount path as it is in serverURL
+  publicServerURL: 'https://example.com/parse',
+  // Your apps name. This will appear in the subject and body of the emails that are sent.
+  appName: 'Parse App',
+  // The email adapter
+  emailAdapter: {
+    module: 'parse-server-simple-mailgun-adapter',
+    options: {
+      // The address that your emails come from
+      fromAddress: 'parse@example.com',
+      // Your domain from mailgun.com
+      domain: 'example.com',
+      // Your API key from mailgun.com
+      apiKey: 'key-mykey',
+    }
+  }
+});
+```
+
+You can also use other email adapters contributed by the community such as [parse-server-sendgrid-adapter](https://www.npmjs.com/package/parse-server-sendgrid-adapter) or [parse-server-mandrill-adapter](https://github.com/back4app/parse-server-mandrill-adapter).
 
 ### Using environment variables to configure Parse Server
 

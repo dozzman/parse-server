@@ -84,6 +84,8 @@ RestWrite.prototype.execute = function() {
   }).then(() => {
     return this.runAfterTrigger();
   }).then(() => {
+    return this.cleanUserAuthData();
+  }).then(() => {
     return this.response;
   });
 };
@@ -167,6 +169,7 @@ RestWrite.prototype.runBeforeTrigger = function() {
       if (this.query && this.query.objectId) {
         delete this.data.objectId
       }
+      return this.validateSchema();
     }
   });
 };
@@ -300,7 +303,7 @@ RestWrite.prototype.handleAuthData = function(authData) {
                               'this auth is already used');
         }
       }
-    } 
+    }
     return Promise.resolve();
   });
 }
@@ -317,8 +320,7 @@ RestWrite.prototype.transformUser = function() {
     var token = 'r:' + cryptoUtils.newToken();
     this.storage['token'] = token;
     promise = promise.then(() => {
-      var expiresAt = new Date();
-      expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+      var expiresAt = this.config.generateSessionExpiresAt();
       var sessionData = {
         sessionToken: token,
         user: {
@@ -472,8 +474,7 @@ RestWrite.prototype.handleSession = function() {
 
   if (!this.query && !this.auth.isMaster) {
     var token = 'r:' + cryptoUtils.newToken();
-    var expiresAt = new Date();
-    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+    var expiresAt = this.config.generateSessionExpiresAt();
     var sessionData = {
       sessionToken: token,
       user: {
@@ -658,10 +659,23 @@ RestWrite.prototype.handleInstallation = function() {
           // device token.
           var delQuery = {
             'deviceToken': this.data.deviceToken,
-            'installationId': {
+          };
+          // We have a unique install Id, use that to preserve
+          // the interesting installation
+          if (this.data.installationId) {
+            delQuery['installationId'] = {
               '$ne': this.data.installationId
             }
-          };
+          } else if (idMatch.objectId && this.data.objectId
+                    && idMatch.objectId == this.data.objectId) {
+            // we passed an objectId, preserve that instalation
+            delQuery['objectId'] = {
+              '$ne': idMatch.objectId
+            }
+          } else {
+            // What to do here? can't really clean up everything...
+            return idMatch.objectId;
+          }
           if (this.data.appIdentifier) {
             delQuery['appIdentifier'] = this.data.appIdentifier;
           }
@@ -715,6 +729,11 @@ RestWrite.prototype.runDatabaseOperation = function() {
   }
 
   if (this.query) {
+    // Force the user to not lockout
+    // Matched with parse.com
+    if (this.className === '_User' && this.data.ACL) {
+      this.data.ACL[this.query.objectId] = { read: true, write: true };
+    }
     // Run an update
     return this.config.database.update(
       this.className, this.query, this.data, this.runOptions).then((resp) => {
@@ -731,12 +750,18 @@ RestWrite.prototype.runDatabaseOperation = function() {
       });
   } else {
     // Set the default ACL for the new _User
-    if (!this.data.ACL && this.className === '_User') {
-      var ACL = {};
+    if (this.className === '_User') {
+      var ACL = this.data.ACL;
+      // default public r/w ACL
+      if (!ACL) {
+        ACL = {};
+        ACL['*'] = { read: true, write: false };
+      }
+      // make sure the user is not locked down
       ACL[this.data.objectId] = { read: true, write: true };
-      ACL['*'] = { read: true, write: false };
       this.data.ACL = ACL;
     }
+
     // Run a create
     return this.config.database.create(this.className, this.data, this.runOptions)
       .then((resp) => {
@@ -823,6 +848,22 @@ RestWrite.prototype.sanitizedData = function() {
   }, deepcopy(this.data));
   return Parse._decode(undefined, data);
 }
+
+RestWrite.prototype.cleanUserAuthData = function() {
+  if (this.response && this.response.response && this.className === '_User') {
+    let user = this.response.response;
+    if (user.authData) {
+      Object.keys(user.authData).forEach((provider) => {
+        if (user.authData[provider] === null) {
+          delete user.authData[provider];
+        }
+      });
+      if (Object.keys(user.authData).length == 0) {
+        delete user.authData;
+      }
+    }
+  }
+};
 
 export default RestWrite;
 module.exports = RestWrite;
